@@ -1,0 +1,116 @@
+- name: Ansible Deployment
+  hosts: localhost
+  become: true
+  gather_facts: yes
+
+  vars:
+    app_port: 8080
+    app_directory: /opt/device-app
+    docker_users:
+      - "{{ ansible_facts['user_id'] }}"
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install Dependencies
+      ansible.builtin.package:
+        name:
+          - bc
+          - curl
+          - expect
+          - git
+          - ca-certificates
+          - apt-transport-https
+          - software-properties-common
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: Create Docker GPG key directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Download Docker's official GPG key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Add Docker repository to Apt sources
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ ansible_facts['architecture'] }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Update apt cache after adding Docker repository
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install Docker and Docker Compose
+      ansible.builtin.package:
+        name:
+          - docker-compose-v2
+          - containerd
+          - runc
+        state: latest
+
+    - name: Ensure Docker service is enabled and started
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: docker
+        append: yes
+      loop: "{{ docker_users }}"
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_directory }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy project files
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/"
+        dest: "{{ app_directory }}/"
+
+    - name: Stop existing containers
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_directory }}"
+        state: absent
+        remove_orphans: yes
+
+    - name: Run Docker Compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_directory }}"
+        state: present
+        remove_orphans: yes
+      register: compose_result
+      retries: 5
+      delay: 5
+      until: compose_result is succeeded
+
+    - name: Wait for application to start
+      ansible.builtin.wait_for:
+        host: "localhost"
+        port: "{{ app_port }}"
+        delay: 5
+        timeout: 30
+
+    - name: Verify application is responding
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_port }}"
+        status_code: 200
+      register: app_status
+
+    - name: Show verification result
+      ansible.builtin.debug:
+        var: app_status.status

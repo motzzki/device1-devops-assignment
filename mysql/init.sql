@@ -1,0 +1,8 @@
+CREATE DATABASE IF NOT EXISTS device_app;
+USE device_app;
+
+CREATE TABLE IF NOT EXISTS health_checks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    check_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(50)
+);
